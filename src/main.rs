@@ -12,10 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-extern crate quicli;
 use quicli::prelude::*;
 
-extern crate fs_extra;
+use log::log;
+use structopt::StructOpt;
 
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
@@ -23,7 +23,7 @@ use std::process::{Command, ExitStatus};
 use std::{env, fs, str};
 
 #[derive(Debug, StructOpt)]
-#[structopt(raw(bin_name = r#""cargo""#))]
+#[structopt(bin_name = r#""cargo""#)]
 enum CargoArgs {
     #[structopt(name = "ghp-upload")]
     GhpUpload(Args),
@@ -52,11 +52,7 @@ struct Args {
     #[structopt(long = "message", default_value = "ghp-upload script")]
     message: String,
     /// The directory to publish the files from
-    #[structopt(
-        long = "directory",
-        parse(from_os_str),
-        default_value = "./target/doc"
-    )]
+    #[structopt(long = "directory", parse(from_os_str), default_value = "./target/doc")]
     upload_directory: PathBuf,
 
     #[structopt(
@@ -65,13 +61,8 @@ struct Args {
     )]
     clobber_index: bool,
 
-    #[structopt(
-        long = "verbose",
-        short = "v",
-        parse(from_occurrences),
-        help = "Enable more verbose logging [repeatable (max 4)]"
-    )]
-    verbosity: u8,
+    #[structopt(flatten)]
+    verbosity: Verbosity,
 }
 
 #[derive(Debug, Default)]
@@ -82,7 +73,7 @@ struct Context {
     pull_request: bool,
 }
 
-fn get_context(args: &Args) -> Result<Context> {
+fn get_context(args: &Args) -> Result<Context, Error> {
     let mut context = Context::default();
 
     if env::var_os("CI").is_some() {
@@ -122,10 +113,10 @@ fn get_context(args: &Args) -> Result<Context> {
                 format!("git@github.com:{}.git", repo_slug)
             })
         } else {
-            warn!("Unsupported CI detected; no CI features were run")
+            warn!("Unsupported CI detected; no CI features were run");
         }
     } else {
-        info!("No CI detected; collecting relevant information from Git")
+        info!("No CI detected; collecting relevant information from Git");
     }
 
     context.branch = context.branch.or_else(|| {
@@ -177,7 +168,7 @@ fn get_context(args: &Args) -> Result<Context> {
     Ok(context)
 }
 
-fn require_success(status: ExitStatus) -> Result<()> {
+fn require_success(status: ExitStatus) -> Result<(), Error> {
     if status.success() {
         Ok(())
     } else {
@@ -185,7 +176,7 @@ fn require_success(status: ExitStatus) -> Result<()> {
     }
 }
 
-fn ghp_upload(branch: &str, origin: &str, args: &Args) -> Result<()> {
+fn ghp_upload(branch: &str, origin: &str, args: &Args) -> CliResult {
     let ghp_dir = Path::new("target/ghp");
     if ghp_dir.exists() {
         // If the directory exists, make sure it's up to date
@@ -238,7 +229,7 @@ fn ghp_upload(branch: &str, origin: &str, args: &Args) -> Result<()> {
         &upload_dir
             .read_dir()?
             .map(|entry| entry.unwrap().path())
-            .collect(),
+            .collect::<Vec<PathBuf>>(),
         ghp_branch_dir,
         &fs_extra::dir::CopyOptions::new(),
         |info| {
@@ -287,24 +278,13 @@ fn ghp_upload(branch: &str, origin: &str, args: &Args) -> Result<()> {
     Ok(())
 }
 
-fn run() -> Result<()> {
+fn main() -> CliResult {
     let CargoArgs::GhpUpload(args) = CargoArgs::from_args();
     let args = Args {
         token: args.token.or_else(|| env::var("GH_TOKEN").ok()),
         ..args
     };
-
-    LoggerBuiler::new()
-        .filter(
-            None,
-            match args.verbosity {
-                0 => LogLevel::Error,
-                1 => LogLevel::Warn,
-                2 => LogLevel::Info,
-                3 => LogLevel::Debug,
-                _ => LogLevel::Trace,
-            }.to_level_filter(),
-        ).try_init()?;
+    args.verbosity.setup_env_logger("gph-upload")?;
 
     debug!("Args");
     debug!("  deploy branch: {}", args.deploy_branch);
@@ -358,14 +338,4 @@ fn run() -> Result<()> {
     }
 
     Ok(())
-}
-
-fn main() {
-    match run() {
-        Ok(_) => {}
-        Err(e) => {
-            error!("{}", e);
-            ::std::process::exit(1);
-        }
-    }
 }

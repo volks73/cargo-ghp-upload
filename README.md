@@ -53,7 +53,7 @@ This crate will not change the contents of the uploaded directory.
 ## Customization
 
 ```
-cargo-ghp-upload 0.3.2
+cargo-ghp-upload 0.3.4
 CAD97 <cad97@cad97.com>
 Upload documentation straight to GitHub Pages, maintaining branch separation and history
 
